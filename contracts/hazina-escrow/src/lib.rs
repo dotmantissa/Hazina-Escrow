@@ -3,6 +3,14 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, Env, String,
 };
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+// Ledgers to extend TTL by (~60 days)
+const ESCROW_BUMP_LEDGERS: u32 = 518_400;
+
+// Min TTL threshold in ledgers (~24h) - only bump if remaining TTL is below this
+const ESCROW_MIN_TTL: u32 = 17_280;
+
 // ─── Storage keys ───────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -79,6 +87,14 @@ impl HazinaEscrow {
             refunded: false,
         };
         env.storage().persistent().set(&EscrowKey::Record(id), &record);
+        
+        // Bump TTL for the new record
+        env.storage().persistent().extend_ttl(
+            &EscrowKey::Record(id),
+            ESCROW_MIN_TTL,
+            ESCROW_BUMP_LEDGERS,
+        );
+        
         env.storage().instance().set(&DataKey::EscrowCount, &(id + 1));
 
         // Emit event so the backend can index it
@@ -95,6 +111,13 @@ impl HazinaEscrow {
     pub fn release(env: Env, admin: Address, escrow_id: u64) {
         admin.require_auth();
         Self::assert_admin(&env, &admin);
+
+        // Bump TTL before reading to prevent expiry during read
+        env.storage().persistent().extend_ttl(
+            &EscrowKey::Record(escrow_id),
+            ESCROW_MIN_TTL,
+            ESCROW_BUMP_LEDGERS,
+        );
 
         let mut record: EscrowRecord = env
             .storage()
@@ -132,6 +155,13 @@ impl HazinaEscrow {
         admin.require_auth();
         Self::assert_admin(&env, &admin);
 
+        // Bump TTL before reading to prevent expiry during read
+        env.storage().persistent().extend_ttl(
+            &EscrowKey::Record(escrow_id),
+            ESCROW_MIN_TTL,
+            ESCROW_BUMP_LEDGERS,
+        );
+
         let mut record: EscrowRecord = env
             .storage()
             .persistent()
@@ -155,6 +185,13 @@ impl HazinaEscrow {
 
     /// Read an escrow record.
     pub fn get_escrow(env: Env, escrow_id: u64) -> EscrowRecord {
+        // Bump TTL on read so read-only queries don't let entries silently expire
+        env.storage().persistent().extend_ttl(
+            &EscrowKey::Record(escrow_id),
+            ESCROW_MIN_TTL,
+            ESCROW_BUMP_LEDGERS,
+        );
+
         env.storage()
             .persistent()
             .get(&EscrowKey::Record(escrow_id))
