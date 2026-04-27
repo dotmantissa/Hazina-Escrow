@@ -164,19 +164,20 @@ export default function DashboardPage() {
   useEffect(() => {
     setLoading(true);
     setFetchError(null);
-    Promise.all([api.getDatasets()])
-      .then(([ds]) => {
-        setDatasets(ds);
-        return Promise.all(ds.map((d) => api.getTransactions(d.id)));
+    api
+      .getDatasets()
+      .then((ds) => {
+        setDatasets(ds.data);
+        return Promise.all(ds.data.map((d) => api.getTransactions(d.id)));
       })
       .then((txArrays) => setTransactions(txArrays.flat()))
       .catch((err) => {
         setFetchError(
-          err instanceof Error ? err.message : "Failed to load dashboard data.",
+          err instanceof Error ? err.message : t("dashboard.loadError"),
         );
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);
   const totalQueries = datasets.reduce((s, d) => s + d.queriesServed, 0);
@@ -250,9 +251,9 @@ export default function DashboardPage() {
   if (fetchError) {
     return (
       <div className="min-h-screen pt-28 flex items-center justify-center px-4">
-        <div className="glass-card max-w-md w-full p-8 text-center">
+          <div className="glass-card max-w-md w-full p-8 text-center">
           <p className="font-display text-xl font-semibold text-foreground mb-3">
-            {t("dashboard.loadError", "Could not load dashboard")}
+            {t("dashboard.loadError")}
           </p>
           <p className="text-sm text-foreground-muted font-body mb-6">{fetchError}</p>
           <button
@@ -260,7 +261,7 @@ export default function DashboardPage() {
             onClick={() => window.location.reload()}
             className="btn-gold px-6 py-2.5 text-sm"
           >
-            {t("common.actions.retry", "Retry")}
+            {t("common.actions.retry")}
           </button>
         </div>
       </div>
