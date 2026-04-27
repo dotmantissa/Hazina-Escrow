@@ -75,7 +75,9 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
       onSuccess({
         id: dataset.id,
         queriesServed: dataset.queriesServed + 1,
-        totalEarned: dataset.totalEarned + dataset.pricePerQuery * 0.95,
+        totalEarned: res.demo
+          ? dataset.totalEarned
+          : dataset.totalEarned + res.transaction.sellerReceived,
       });
     } catch (err: unknown) {
       clearInterval(verifyTimerRef.current!);
