@@ -8,6 +8,7 @@ pub enum DataKey {
     Admin,
     PlatformFee,
     EscrowCount,
+    DatasetFee(String),
 }
 
 #[contracttype]
@@ -91,8 +92,43 @@ impl HazinaEscrow {
         Self::transfer_admin(env, admin, new_admin);
     }
 
-    pub fn get_fee(env: Env) -> u32 {
+    pub fn get_default_fee(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::PlatformFee).unwrap_or(500)
+    }
+
+    pub fn set_default_fee(env: Env, admin: Address, fee_bps: u32) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+        if fee_bps > 10_000 {
+            soroban_sdk::panic_with_error!(&env, Error::InvalidInput);
+        }
+        env.storage().instance().set(&DataKey::PlatformFee, &fee_bps);
+    }
+
+    pub fn set_dataset_fee(env: Env, admin: Address, dataset_id: String, fee_bps: u32) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+        if fee_bps > 10_000 {
+            soroban_sdk::panic_with_error!(&env, Error::InvalidInput);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::DatasetFee(dataset_id), &fee_bps);
+    }
+
+    pub fn clear_dataset_fee(env: Env, admin: Address, dataset_id: String) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .remove(&DataKey::DatasetFee(dataset_id));
+    }
+
+    pub fn get_dataset_fee_config(env: Env, dataset_id: String) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DatasetFee(dataset_id))
+            .unwrap_or_else(|| env.storage().instance().get(&DataKey::PlatformFee).unwrap_or(500))
     }
 
     pub fn lock(
@@ -559,7 +595,7 @@ mod fuzz_tests {
             let admin = Address::generate(&env);
             let client = deploy_escrow(&env, &admin, 500);
             client.set_fee(&admin, &new_fee);
-            prop_assert_eq!(client.get_fee(), new_fee);
+            prop_assert_eq!(client.get_default_fee(), new_fee);
         }
 
         #[test]
