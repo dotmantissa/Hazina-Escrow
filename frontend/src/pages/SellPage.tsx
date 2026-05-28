@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Upload,
@@ -78,6 +78,23 @@ export default function SellPage() {
   const [error, setError] = useState("");
   const [showConfirm, setShowConfirm] = useState(false);
   const [jsonError, setJsonError] = useState("");
+  const [walletTouched, setWalletTouched] = useState(false);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (showConfirm) {
+      confirmBtnRef.current?.focus();
+    }
+  }, [showConfirm]);
+
+  useEffect(() => {
+    if (!showConfirm) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowConfirm(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showConfirm]);
 
   // Persist form draft across page reloads
   useEffect(() => {
@@ -131,8 +148,12 @@ export default function SellPage() {
     reader.readAsText(file);
   };
 
-  const isValidStellarAddress = (addr: string): boolean =>
-    /^G[A-Z2-7]{55}$/.test(addr.trim());
+  const isValidStellarAddress = (addr: string): boolean => {
+    const trimmed = addr.trim();
+    return trimmed.length === 56 && trimmed.startsWith("G") && /^[A-Z2-7]{56}$/.test(trimmed);
+  };
+
+  const isWalletInvalid = walletTouched && !isValidStellarAddress(form.sellerWallet);
 
   const isValid =
     form.name.trim() &&
@@ -353,15 +374,16 @@ export default function SellPage() {
                     type="text"
                     value={form.sellerWallet}
                     onChange={set("sellerWallet")}
+                    onBlur={() => setWalletTouched(true)}
                     placeholder={t("sell.form.sellerWalletPlaceholder")}
                     className={clsx(
                       "w-full bg-void/60 border rounded-xl px-4 py-3 text-sm font-mono text-foreground placeholder:text-muted focus:outline-none transition-colors",
-                      form.sellerWallet && !isValidStellarAddress(form.sellerWallet)
+                      isWalletInvalid
                         ? "border-red-500/50 focus:border-red-500/70"
                         : "border-border/60 focus:border-gold/50",
                     )}
                   />
-                  {form.sellerWallet && !isValidStellarAddress(form.sellerWallet) && (
+                  {isWalletInvalid && (
                     <p className="text-xs text-red-400 mt-1 font-body">
                       {t("sell.form.sellerWalletError")}
                     </p>
@@ -495,6 +517,7 @@ export default function SellPage() {
                           Cancel
                         </button>
                         <button
+                          ref={confirmBtnRef}
                           onClick={handleSubmitConfirmed}
                           className="btn-gold flex-1 py-2.5 text-sm"
                         >
@@ -571,7 +594,7 @@ export default function SellPage() {
                 { queries: 1000, label: t("sell.earnings.thousandQueries") },
               ].map(({ queries, label }) => {
                 const price = parseFloat(form.pricePerQuery) || 0;
-                const earned = (price * queries * 0.95).toFixed(2);
+                const earned = price * queries * 0.95;
                 return (
                   <div
                     key={queries}
@@ -581,7 +604,7 @@ export default function SellPage() {
                       {label}
                     </span>
                     <span className="font-body font-semibold text-gold text-sm">
-                      ${formatUSDC(Number(earned), locale)}
+                      ${formatUSDC(earned, locale)}
                     </span>
                   </div>
                 );

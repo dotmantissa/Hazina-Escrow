@@ -170,6 +170,22 @@ impl HazinaEscrow {
             .publish((soroban_sdk::symbol_short!("fee_upd"),), (admin, fee_bps));
     }
 
+    /// Transfer admin role to a new address. Only current admin can call.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events()
+            .publish((soroban_sdk::symbol_short!("admin"),), (new_admin,));
+    }
+
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Update platform fee (max 1000 bps = 10%). Only admin.
     pub fn update_fee(env: Env, admin: Address, new_fee_bps: u32) {
         Self::set_default_fee(env, admin, new_fee_bps);
     }
@@ -373,6 +389,8 @@ impl HazinaEscrow {
         Self::assert_not_paused(&env);
         Self::assert_valid_amount(&env, amount);
         Self::assert_valid_dataset_id(&env, &dataset_id);
+        Self::assert_valid_token(&env, &token);
+        Self::assert_valid_parties(&env, &buyer, &seller);
         Self::require_operational_address(&env, &buyer);
         Self::require_operational_address(&env, &seller);
 
@@ -381,6 +399,7 @@ impl HazinaEscrow {
         Self::check_rate_circuit_breaker_n(&env, 1);
 
         let token_client = token::Client::new(&env, &token);
+        let _ = token_client.decimals();
         token_client.transfer(&buyer, &env.current_contract_address(), &amount);
 
         let fee_bps = Self::resolve_fee_bps(&env, &dataset_id);
@@ -436,7 +455,7 @@ impl HazinaEscrow {
         if shares.is_empty() || shares.len() != dataset_ids.len() {
             panic_with_error!(&env, HazinaEscrowError::EscrowNotFound);
         }
-
+        Self::assert_valid_token(&env, &token);
         Self::require_operational_address(&env, &buyer);
 
         let mut total_amount: i128 = 0;
@@ -457,6 +476,7 @@ impl HazinaEscrow {
         Self::check_rate_circuit_breaker_n(&env, shares.len());
 
         let token_client = token::Client::new(&env, &token);
+        let _ = token_client.decimals();
         token_client.transfer(&buyer, &env.current_contract_address(), &total_amount);
 
         let first_id: u64 = env
@@ -600,15 +620,24 @@ impl HazinaEscrow {
     }
 
     fn assert_valid_amount(env: &Env, amount: i128) {
-        if amount <= 0 {
-            panic_with_error!(env, HazinaEscrowError::InvalidAmount);
-        }
+        assert!(amount > 0, "Amount must be greater than zero");
     }
 
     fn assert_valid_dataset_id(env: &Env, dataset_id: &String) {
-        if dataset_id.is_empty() {
-            panic_with_error!(env, HazinaEscrowError::EmptyDatasetId);
-        }
+        assert!(!dataset_id.is_empty(), "dataset_id cannot be empty");
+    }
+
+    fn assert_valid_token(env: &Env, token: &Address) {
+        let token_client = token::Client::new(env, token);
+        let _ = token_client.decimals();
+    }
+
+    fn assert_valid_parties(env: &Env, buyer: &Address, seller: &Address) {
+        assert!(buyer != seller, "Buyer and seller cannot be the same");
+        assert!(
+            seller != &env.current_contract_address(),
+            "Seller cannot be the zero address"
+        );
     }
 
     fn assert_not_paused(env: &Env) {
@@ -752,6 +781,7 @@ mod tests {
     };
 
     const INITIAL_BUYER_BALANCE: i128 = 10_000_000_000; // 1_000 units with 7 decimals
+    const MINIMAL_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
 
     fn setup() -> (
         Env,
@@ -846,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "dataset_id cannot be empty")]
     fn test_set_dataset_fee_requires_non_empty_dataset_id() {
         let (env, client, admin, _buyer, _seller, _usdc) = setup();
         client.set_dataset_fee(&admin, &dataset_id(&env, ""), &900);
@@ -940,10 +970,39 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Amount must be greater than zero")]
     fn test_lock_rejects_invalid_amount() {
         let (env, client, _admin, buyer, seller, usdc) = setup();
         client.lock(&buyer, &seller, &usdc, &0, &dataset_id(&env, "ds-invalid"));
+    }
+
+    #[test]
+    #[should_panic(expected = "dataset_id cannot be empty")]
+    fn test_lock_rejects_empty_dataset_id() {
+        let (env, client, _admin, buyer, seller, usdc) = setup();
+        client.lock(&buyer, &seller, &usdc, &1_000_000, &dataset_id(&env, ""));
+    }
+
+    #[test]
+    #[should_panic(expected = "Buyer and seller cannot be the same")]
+    fn test_lock_rejects_same_buyer_and_seller() {
+        let (env, client, _admin, buyer, _seller, usdc) = setup();
+        client.lock(&buyer, &buyer, &usdc, &1_000_000, &dataset_id(&env, "ds-same-party"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_lock_rejects_invalid_token_contract() {
+        let (env, client, _admin, buyer, seller, _usdc) = setup();
+        let invalid_token = Address::generate(&env);
+
+        client.lock(
+            &buyer,
+            &seller,
+            &invalid_token,
+            &1_000_000,
+            &dataset_id(&env, "ds-bad-token"),
+        );
     }
 
     #[test]
@@ -1236,6 +1295,39 @@ mod tests {
 
         client.set_fee(&new_admin, &100);
         assert_eq!(client.get_fee(), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn test_upgrade_requires_admin() {
+        let (env, client, _admin, _, _, _) = setup();
+        let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, MINIMAL_WASM));
+        let outsider = Address::generate(&env);
+
+        client.upgrade(&outsider, &new_wasm_hash);
+    }
+
+    #[test]
+    fn test_upgrade_preserves_escrow_state() {
+        let (env, client, admin, buyer, seller, usdc) = setup();
+        let escrow_id = client.lock(
+            &buyer,
+            &seller,
+            &usdc,
+            &1_000_000,
+            &dataset_id(&env, "ds-upgrade-preserve"),
+        );
+        let before = client.get_escrow(&escrow_id);
+
+        let new_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, MINIMAL_WASM));
+        client.upgrade(&admin, &new_wasm_hash);
+
+        let after: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&EscrowKey::Record(escrow_id))
+            .unwrap();
+        assert_eq!(before, after);
     }
 
     #[test]
