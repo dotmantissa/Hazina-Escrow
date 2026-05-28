@@ -57,6 +57,8 @@ export function useTransactionWebSocket(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
   const reconnectAttemptsRef = useRef(0);
+  // Store callbacks in ref to avoid dependency issues
+  const callbacksRef = useRef(callbacks);
   const maxReconnectAttempts = 5;
   const baseReconnectDelay = 1000; // 1 second
 
@@ -66,6 +68,11 @@ export function useTransactionWebSocket(
   const getReconnectDelay = useCallback((): number => {
     return baseReconnectDelay * Math.pow(2, Math.min(reconnectAttemptsRef.current, 3));
   }, []);
+
+  // Update callbacks ref when callbacks change (without triggering reconnects)
+  useEffect(() => {
+    callbacksRef.current = callbacks;
+  }, [callbacks]);
 
   /**
    * Connect to WebSocket server
@@ -102,16 +109,16 @@ export function useTransactionWebSocket(
           // Route to appropriate callback
           switch (message.type) {
             case 'transaction:update':
-              callbacks.onTransactionUpdate?.(message as TransactionUpdateEvent);
+              callbacksRef.current?.onTransactionUpdate?.(message as TransactionUpdateEvent);
               break;
             case 'payment:received':
-              callbacks.onPaymentReceived?.(message as PaymentReceivedEvent);
+              callbacksRef.current?.onPaymentReceived?.(message as PaymentReceivedEvent);
               break;
             case 'payment:forwarded':
-              callbacks.onPaymentForwarded?.(message as PaymentForwardedEvent);
+              callbacksRef.current?.onPaymentForwarded?.(message as PaymentForwardedEvent);
               break;
             case 'dataset:queried':
-              callbacks.onDatasetQueried?.(message as DatasetQueryEvent);
+              callbacksRef.current?.onDatasetQueried?.(message as DatasetQueryEvent);
               break;
           }
         } catch (error) {
@@ -123,7 +130,7 @@ export function useTransactionWebSocket(
         console.error('[WebSocket] Error:', error);
         const errorMsg = error instanceof Event ? 'WebSocket error' : String(error);
         setState(prev => ({ ...prev, error: errorMsg, connected: false }));
-        callbacks.onError?.(errorMsg);
+        callbacksRef.current?.onError?.(errorMsg);
       };
 
       ws.onclose = () => {
@@ -149,9 +156,9 @@ export function useTransactionWebSocket(
       console.error('[WebSocket] Connection failed:', error);
       const errorMsg = error instanceof Error ? error.message : 'Connection failed';
       setState({ connected: false, error: errorMsg });
-      callbacks.onError?.(errorMsg);
+      callbacksRef.current?.onError?.(errorMsg);
     }
-  }, [options, callbacks, getReconnectDelay]);
+  }, [options, getReconnectDelay]);
 
   /**
    * Disconnect from WebSocket server
