@@ -45,8 +45,10 @@ interface WebSocketCallbacks {
  */
 export function useTransactionWebSocket(
   options: UseTransactionWebSocketOptions,
-  callbacks: WebSocketCallbacks
-): WebSocketState & { subscribe: (ids: { datasetIds?: string[]; transactionIds?: string[] }) => void } {
+  callbacks: WebSocketCallbacks,
+): WebSocketState & {
+  subscribe: (ids: { datasetIds?: string[]; transactionIds?: string[] }) => void;
+} {
   const [state, setState] = useState<WebSocketState>({
     connected: false,
     error: null,
@@ -93,7 +95,7 @@ export function useTransactionWebSocket(
         ws.send(JSON.stringify(subscribeMsg));
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = event => {
         try {
           const message = JSON.parse(event.data) as ServerEvent;
 
@@ -117,22 +119,24 @@ export function useTransactionWebSocket(
         }
       };
 
-      ws.onerror = (error) => {
+      ws.onerror = error => {
         console.error('[WebSocket] Error:', error);
         const errorMsg = error instanceof Event ? 'WebSocket error' : String(error);
-        setState((prev) => ({ ...prev, error: errorMsg, connected: false }));
+        setState(prev => ({ ...prev, error: errorMsg, connected: false }));
         callbacks.onError?.(errorMsg);
       };
 
       ws.onclose = () => {
         console.log('[WebSocket] Disconnected');
-        setState((prev) => ({ ...prev, connected: false }));
+        setState(prev => ({ ...prev, connected: false }));
 
         // Attempt to reconnect with exponential backoff
         if (reconnectAttemptsRef.current < maxReconnectAttempts && options.enabled !== false) {
           reconnectAttemptsRef.current += 1;
           const delay = getReconnectDelay();
-          console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+          console.log(
+            `[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`,
+          );
 
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
@@ -183,13 +187,13 @@ export function useTransactionWebSocket(
 
       wsRef.current.send(JSON.stringify(msg));
     },
-    [options.apiToken]
+    [options.apiToken],
   );
 
   /**
    * Send ping message to keep connection alive
    */
-  const sendPing = useCallback((): void => {
+  const _sendPing = useCallback((): void => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
     }
@@ -205,19 +209,6 @@ export function useTransactionWebSocket(
       disconnect();
     };
   }, [connect, disconnect]);
-
-  // Send periodic ping to keep connection alive
-  useEffect(() => {
-    const pingInterval = setInterval(() => {
-      if (state.connected) {
-        sendPing();
-      }
-    }, 25000); // 25 seconds
-
-    return () => {
-      clearInterval(pingInterval);
-    };
-  }, [state.connected, sendPing]);
 
   return {
     connected: state.connected,
